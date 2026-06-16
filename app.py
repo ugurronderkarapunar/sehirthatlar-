@@ -10,7 +10,7 @@ st.title("🚢 Üsküdar-Beşiktaş Hattı Analiz ve Optimizasyon")
 # 1. Veri yükleme
 uploaded_file = st.file_uploader("Excel dosyasını yükleyin", type=["xlsx"])
 if uploaded_file:
-    df = load_data(uploaded_file)
+    df = pd.read_excel("ÜSKÜDAR BEŞİKTAŞ YÖNÜ.xlsx")
     st.dataframe(df.head())
     
     # 2. Graf oluştur
