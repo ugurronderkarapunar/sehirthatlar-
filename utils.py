@@ -4,7 +4,7 @@ from sklearn.ensemble import RandomForestRegressor
 from datetime import datetime
 
 def load_data(file):
-    df = pd.read_excel(file)
+    df = pd.read_excel("ÜSKÜDAR BEŞİKTAŞ YÖNÜ.xlsx")
     # tarih ve saati birleştir
     df['datetime'] = pd.to_datetime(df['Tarih'].astype(str) + ' ' + df['Saat'].astype(str))
     return df
