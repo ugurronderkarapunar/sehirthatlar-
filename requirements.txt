@@ -5,7 +5,5 @@ plotly
 folium
 streamlit-folium
 scikit-learn
-xgboost
-prophet
-geopy (koordinat dönüşümü için)
-networkx (graf işlemleri)
+networkx
+openpyxl
