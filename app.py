@@ -85,7 +85,7 @@ def load_data(file):
     df['YÖN'] = df['YÖN'].str.strip()
     df['KART_TIPI'] = df['KART TİPİ'].str.strip() if 'KART TİPİ' in df.columns else 'Bilinmiyor'
     
-    # Hedef temizleme (NaN ve boşları filtrele)
+    # Hedef temizleme
     df['Hedef_Temiz'] = df['İNDİKTEN SONRA NEREYE GİTTİ'].apply(
         lambda x: str(x).strip() if pd.notna(x) and str(x).strip() not in ['', 'BİLİNMİYOR', 'nan'] else None
     )
@@ -136,7 +136,6 @@ ilce_koordinatlar = {
 # KOORDİNAT BULMA (STATİK + OTOMATİK)
 # ------------------------------
 def get_coordinates_static(yer):
-    """Önce statik sözlüğe bakar."""
     if not yer or yer == 'None':
         return None
     yer_ust = yer.upper().strip()
@@ -149,31 +148,22 @@ def get_coordinates_static(yer):
 
 @st.cache_data
 def get_coordinates_auto(yer_adı):
-    """
-    Önce statik sözlüğe bakar; bulamazsa Nominatim API ile arar.
-    Sonuç önbelleğe alınır (cache).
-    """
     if not yer_adı or yer_adı == 'None':
         return None
     
-    # 1. Statik kontrol
     static_result = get_coordinates_static(yer_adı)
     if static_result:
         return static_result
     
-    # 2. API ile ara
     try:
         geolocator = Nominatim(user_agent="vapur_analiz_uygulama")
-        # Önce "yer_adı, İstanbul, Türkiye" dene
         location = geolocator.geocode(f"{yer_adı}, İstanbul, Türkiye")
         if not location:
             location = geolocator.geocode(yer_adı)
         if location:
             return (location.latitude, location.longitude)
-        else:
-            return None
-    except Exception as e:
-        # Hata durumunda sessizce geç
+        return None
+    except:
         return None
 
 # ------------------------------
@@ -250,7 +240,6 @@ st.subheader("📈 Saatlik Biniş Dağılımı")
 
 fig, axes = plt.subplots(1, 2, figsize=(16, 5))
 
-# Üsküdar yönü
 df_u = filtered_df[filtered_df['YÖN'] == 'ÜSKÜDAR → BEŞİKTAŞ']
 binme_u = df_u.groupby('Saat').size().reset_index(name='Yolcu')
 axes[0].bar(binme_u['Saat'], binme_u['Yolcu'], color='#1E88E5', edgecolor='white', alpha=0.8)
@@ -264,7 +253,6 @@ if not binme_u.empty:
     axes[0].axvline(binme_u.loc[max_idx, 'Saat'], color='red', linestyle='--', alpha=0.5, label='Tepe Saat')
     axes[0].legend()
 
-# Beşiktaş yönü
 df_b = filtered_df[filtered_df['YÖN'] == 'BEŞİKTAŞ → ÜSKÜDAR']
 binme_b = df_b.groupby('Saat').size().reset_index(name='Yolcu')
 axes[1].bar(binme_b['Saat'], binme_b['Yolcu'], color='#FF9800', edgecolor='white', alpha=0.8)
@@ -305,7 +293,7 @@ if not kart_df.empty:
 # ------------------------------
 st.subheader("🗺️ Gidilen Yerler Haritası")
 
-# Gidilen yerleri koordinatlarla eşleştir (otomatik)
+# Gidilen yerleri koordinatlarla eşleştir
 gidis_data = filtered_df[filtered_df['Hedef_Temiz'].notna()].copy()
 gidis_data['Koordinat'] = gidis_data['Hedef_Temiz'].apply(get_coordinates_auto)
 gidis_harita = gidis_data.dropna(subset=['Koordinat'])
@@ -373,12 +361,11 @@ with st.container():
         tahmin_button = st.button("🚀 Tahmin Yap", use_container_width=True)
 
 if tahmin_button and tahmin_hedef != 'Veri Yok':
-    tahmin_df = df[
+    tahmin_sayisi = len(df[
         (df['YÖN'] == tahmin_yon) &
         (df['Hedef_Temiz'] == tahmin_hedef) &
         (df['Saat'] == tahmin_saat)
-    ]
-    tahmin_sayisi = len(tahmin_df)
+    ])
     
     saatlik_ortalama = df[
         (df['YÖN'] == tahmin_yon) &
@@ -398,7 +385,6 @@ if tahmin_button and tahmin_hedef != 'Veri Yok':
     col_r4.metric("📌 Toplam (Tüm Saatler)", 
                   f"{df[(df['YÖN'] == tahmin_yon) & (df['Hedef_Temiz'] == tahmin_hedef)].shape[0]:,} kişi")
     
-    # Trend grafiği
     trend_df = df[
         (df['YÖN'] == tahmin_yon) &
         (df['Hedef_Temiz'] == tahmin_hedef)
@@ -450,9 +436,9 @@ with tab1:
         st.info("Geliş hattı verisi bulunamadı.")
 
 with tab2:
-    gidis_data = filtered_df[filtered_df['Hedef_Temiz'].notna()]
-    if not gidis_data.empty:
-        gidis_ozet = gidis_data.groupby(['YÖN', 'Hedef_Temiz']).size().reset_index(name='Kisi')
+    gidis_data_tab2 = filtered_df[filtered_df['Hedef_Temiz'].notna()]
+    if not gidis_data_tab2.empty:
+        gidis_ozet = gidis_data_tab2.groupby(['YÖN', 'Hedef_Temiz']).size().reset_index(name='Kisi')
         gidis_ozet = gidis_ozet.sort_values('Kisi', ascending=False)
         st.dataframe(gidis_ozet, use_container_width=True)
         
@@ -466,12 +452,16 @@ with tab2:
         st.info("Gidiş verisi bulunamadı.")
 
 with tab3:
-    harita_data = gidis_data[gidis_data['Koordinat'].notna()][['YÖN', 'Hedef_Temiz', 'Saat', 'KART_TIPI', 'Koordinat']]
-    if not harita_data.empty:
-        st.dataframe(harita_data, use_container_width=True)
-        st.caption(f"Haritada {len(harita_data)} nokta işaretlendi.")
+    # Tab3'te haritada kullanılan gidis_data'yı (Koordinat sütunu ile) göster
+    if 'Koordinat' in gidis_data.columns:
+        harita_data = gidis_data[gidis_data['Koordinat'].notna()][['YÖN', 'Hedef_Temiz', 'Saat', 'KART_TIPI', 'Koordinat']]
+        if not harita_data.empty:
+            st.dataframe(harita_data, use_container_width=True)
+            st.caption(f"Haritada {len(harita_data)} nokta işaretlendi.")
+        else:
+            st.info("Koordinatı bulunabilen veri yok.")
     else:
-        st.info("Harita verisi bulunamadı.")
+        st.info("Harita verisi oluşturulmamış. Lütfen ana harita bölümünü kontrol edin.")
 
 with tab4:
     gitmeyen_data = filtered_df[
