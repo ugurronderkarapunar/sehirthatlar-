@@ -7,8 +7,12 @@ from datetime import datetime
 import folium
 from streamlit_folium import st_folium
 from folium.plugins import MarkerCluster
+from geopy.geocoders import Nominatim
+import time
 
+# ------------------------------
 # Sayfa ayarları
+# ------------------------------
 st.set_page_config(
     page_title="🚢 Vapur Hattı Analiz Dashboard",
     page_icon="⛴️",
@@ -16,7 +20,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# ------------------------------
 # CSS
+# ------------------------------
 st.markdown("""
 <style>
     .main-header {
@@ -47,7 +53,9 @@ st.markdown("""
 
 st.markdown('<div class="main-header">⛴️ Üsküdar – Beşiktaş Vapur Hattı Analiz ve Tahmin Aracı</div>', unsafe_allow_html=True)
 
+# ------------------------------
 # Sidebar - Dosya yükleme
+# ------------------------------
 with st.sidebar:
     st.header("📂 Veri Yükle")
     uploaded_file = st.file_uploader("Excel dosyasını yükleyin", type=["xlsx"])
@@ -88,7 +96,7 @@ df = load_data(uploaded_file)
 st.success(f"✅ Veri başarıyla yüklendi! Toplam {df.shape[0]:,} satır.")
 
 # ------------------------------
-# İSTANBUL İLÇE KOORDİNATLARI (Harita için)
+# İSTANBUL İLÇE KOORDİNATLARI (Statik)
 # ------------------------------
 ilce_koordinatlar = {
     'BEŞİKTAŞ': (41.0425, 29.0070),
@@ -124,19 +132,49 @@ ilce_koordinatlar = {
     'BÜYÜKÇEKMECE': (41.0200, 28.5800),
 }
 
-def get_coordinates(yer):
-    """Yer adına göre koordinat döndürür, eşleşme yoksa None."""
+# ------------------------------
+# KOORDİNAT BULMA (STATİK + OTOMATİK)
+# ------------------------------
+def get_coordinates_static(yer):
+    """Önce statik sözlüğe bakar."""
     if not yer or yer == 'None':
         return None
     yer_ust = yer.upper().strip()
-    # Tam eşleşme
     if yer_ust in ilce_koordinatlar:
         return ilce_koordinatlar[yer_ust]
-    # Kısmi eşleşme
     for key, coord in ilce_koordinatlar.items():
         if key in yer_ust or yer_ust in key:
             return coord
     return None
+
+@st.cache_data
+def get_coordinates_auto(yer_adı):
+    """
+    Önce statik sözlüğe bakar; bulamazsa Nominatim API ile arar.
+    Sonuç önbelleğe alınır (cache).
+    """
+    if not yer_adı or yer_adı == 'None':
+        return None
+    
+    # 1. Statik kontrol
+    static_result = get_coordinates_static(yer_adı)
+    if static_result:
+        return static_result
+    
+    # 2. API ile ara
+    try:
+        geolocator = Nominatim(user_agent="vapur_analiz_uygulama")
+        # Önce "yer_adı, İstanbul, Türkiye" dene
+        location = geolocator.geocode(f"{yer_adı}, İstanbul, Türkiye")
+        if not location:
+            location = geolocator.geocode(yer_adı)
+        if location:
+            return (location.latitude, location.longitude)
+        else:
+            return None
+    except Exception as e:
+        # Hata durumunda sessizce geç
+        return None
 
 # ------------------------------
 # Sidebar - Filtreler
@@ -156,7 +194,6 @@ with st.sidebar:
         value=(6, 22)
     )
     
-    # Kart tipi filtresi
     kart_tipleri = df['KART_TIPI'].unique()
     kart_tipleri = [k for k in kart_tipleri if k and k != 'Bilinmiyor']
     kart_filter = st.multiselect(
@@ -193,8 +230,6 @@ total = len(filtered_df)
 total_uskudar = len(filtered_df[filtered_df['YÖN'] == 'ÜSKÜDAR → BEŞİKTAŞ'])
 total_besiktas = len(filtered_df[filtered_df['YÖN'] == 'BEŞİKTAŞ → ÜSKÜDAR'])
 
-# Aktarma ve gitmeyen (doğru hesaplama)
-# Aktarma = 1 olanlar, Gitmeyen = 0 veya hedef bilgisi olmayanlar
 aktarma = len(filtered_df[filtered_df['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'] == 1])
 gitmeyen = len(filtered_df[
     (filtered_df['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'] == 0) |
@@ -266,23 +301,19 @@ if not kart_df.empty:
         st.dataframe(kart_ozet, use_container_width=True)
 
 # ------------------------------
-# HARİTA İLE NEREYE GİTTİ?
+# HARİTA İLE NEREYE GİTTİ? (OTOMATİK KOORDİNAT)
 # ------------------------------
 st.subheader("🗺️ Gidilen Yerler Haritası")
 
-# Gidilen yerleri koordinatlarla eşleştir
+# Gidilen yerleri koordinatlarla eşleştir (otomatik)
 gidis_data = filtered_df[filtered_df['Hedef_Temiz'].notna()].copy()
-gidis_data['Koordinat'] = gidis_data['Hedef_Temiz'].apply(get_coordinates)
+gidis_data['Koordinat'] = gidis_data['Hedef_Temiz'].apply(get_coordinates_auto)
 gidis_harita = gidis_data.dropna(subset=['Koordinat'])
 
 if not gidis_harita.empty:
-    # Harita oluştur
     m = folium.Map(location=[41.015, 28.98], zoom_start=11, tiles='OpenStreetMap')
-    
-    # Marker cluster ekle
     marker_cluster = MarkerCluster().add_to(m)
     
-    # Her bir konum için marker ekle
     for _, row in gidis_harita.iterrows():
         lat, lon = row['Koordinat']
         popup_text = f"""
@@ -297,14 +328,11 @@ if not gidis_harita.empty:
             icon=folium.Icon(color='blue' if row['YÖN'] == 'ÜSKÜDAR → BEŞİKTAŞ' else 'orange', icon='info-sign')
         ).add_to(marker_cluster)
     
-    # Haritayı göster
     st_folium(m, width=1000, height=500)
     
-    # Harita istatistikleri
     col_h1, col_h2 = st.columns(2)
     col_h1.metric("Toplam Gidilen Yer", f"{len(gidis_harita['Hedef_Temiz'].unique())} farklı yer")
     col_h2.metric("Toplam İşaretlenen Nokta", f"{len(gidis_harita):,}")
-    
 else:
     st.info("Harita için yeterli veri bulunamadı (koordinat eşleşmesi yapılamadı).")
 
@@ -344,7 +372,6 @@ with st.container():
         st.write("")
         tahmin_button = st.button("🚀 Tahmin Yap", use_container_width=True)
 
-# Tahmin sonuçları
 if tahmin_button and tahmin_hedef != 'Veri Yok':
     tahmin_df = df[
         (df['YÖN'] == tahmin_yon) &
@@ -439,7 +466,6 @@ with tab2:
         st.info("Gidiş verisi bulunamadı.")
 
 with tab3:
-    # Harita için kullanılan veri
     harita_data = gidis_data[gidis_data['Koordinat'].notna()][['YÖN', 'Hedef_Temiz', 'Saat', 'KART_TIPI', 'Koordinat']]
     if not harita_data.empty:
         st.dataframe(harita_data, use_container_width=True)
