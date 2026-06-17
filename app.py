@@ -5,361 +5,373 @@ import seaborn as sns
 import numpy as np
 from datetime import datetime
 
+# Sayfa yapılandırması
 st.set_page_config(
     page_title="Vapur Hattı Analiz Dashboard", 
+    page_icon="🚢", 
     layout="wide",
-    page_icon="🚢",
     initial_sidebar_state="expanded"
 )
 
-# ------------------------------
-# SİDEBAR - FİLTRELER
-# ------------------------------
-st.sidebar.title("⚙️ Filtreler")
-st.sidebar.markdown("---")
+# CSS ile özel stiller
+st.markdown("""
+<style>
+    .main-header { font-size: 2.5rem; font-weight: bold; color: #1E88E5; text-align: center; }
+    .sub-header { font-size: 1.2rem; color: #555; text-align: center; margin-bottom: 2rem; }
+    .metric-card { background: #f8f9fa; padding: 1rem; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .metric-value { font-size: 2rem; font-weight: bold; color: #1E88E5; }
+    .metric-label { font-size: 0.9rem; color: #666; }
+    .insight-box { background: #E3F2FD; padding: 1rem; border-radius: 10px; border-left: 5px solid #1E88E5; margin: 0.5rem 0; }
+</style>
+""", unsafe_allow_html=True)
 
-uploaded_file = st.sidebar.file_uploader(
-    "📂 Excel dosyasını yükleyin", 
-    type=["xlsx"],
-    help="20260506_2_REV5.xlsx dosyasını yükleyin"
-)
+# Başlık
+st.markdown('<div class="main-header">🚢 Üsküdar – Beşiktaş Vapur Hattı</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Yolcu Analiz ve Tahmin Dashboardu</div>', unsafe_allow_html=True)
+
+# ------------------------------
+# DOSYA YÜKLEME
+# ------------------------------
+uploaded_file = st.file_uploader("📂 Excel dosyasını yükleyin", type=["xlsx"])
 
 if uploaded_file is None:
-    st.warning("Lütfen Excel dosyasını yükleyin.")
+    st.info("📌 Lütfen veri dosyasını yükleyin.")
     st.stop()
 
 # ------------------------------
-# VERİYİ OKU
+# VERİ OKUMA VE TEMİZLEME
 # ------------------------------
 @st.cache_data
 def load_data(file):
     df = pd.read_excel(file, sheet_name='Sayfa2')
     df.columns = df.columns.str.strip()
-    df['MERKEZDEN GEMİYE BİNİŞ'] = pd.to_datetime(
-        df['MERKEZDEN GEMİYE BİNİŞ'], format='mixed', errors='coerce'
-    )
+    df['MERKEZDEN GEMİYE BİNİŞ'] = pd.to_datetime(df['MERKEZDEN GEMİYE BİNİŞ'], format='mixed', errors='coerce')
     df = df.dropna(subset=['MERKEZDEN GEMİYE BİNİŞ'])
     df['Saat'] = df['MERKEZDEN GEMİYE BİNİŞ'].dt.hour
-    df['Saat_Dilimi'] = df['Saat'].apply(lambda x: f"{x:02d}:00–{x:02d}:59")
+    df['Saat_Dilimi'] = df['Saat'].apply(lambda x: f"{x:02d}:00")
     df['YÖN'] = df['YÖN'].str.strip()
-    df['Tarih'] = df['MERKEZDEN GEMİYE BİNİŞ'].dt.date
     return df
 
 df = load_data(uploaded_file)
-
-# Sidebar filtreler
-st.sidebar.markdown("### 📍 Yön Seçimi")
-yon_filter = st.sidebar.selectbox(
-    "Yön", 
-    options=['Tümü', 'ÜSKÜDAR → BEŞİKTAŞ', 'BEŞİKTAŞ → ÜSKÜDAR'],
-    index=0
-)
-
-st.sidebar.markdown("### ⏰ Saat Aralığı")
-saat_min, saat_max = st.sidebar.slider(
-    "Saat aralığı seçin",
-    min_value=0, max_value=23, value=(0, 23)
-)
-
-st.sidebar.markdown("### 🎯 Hedef Filtre")
-hedef_list = df[df['İNDİKTEN SONRA NEREYE GİTTİ'].notna()]['İNDİKTEN SONRA NEREYE GİTTİ'].unique()
-hedef_list = [h for h in hedef_list if h not in ['', 'BİLİNMİYOR']]
-hedef_filter = st.sidebar.multiselect(
-    "Gidilen Yerler",
-    options=sorted(hedef_list),
-    default=[]
-)
-
-# Filtreleme
-df_filtered = df.copy()
-if yon_filter != 'Tümü':
-    df_filtered = df_filtered[df_filtered['YÖN'] == yon_filter]
-df_filtered = df_filtered[(df_filtered['Saat'] >= saat_min) & (df_filtered['Saat'] <= saat_max)]
-if hedef_filter:
-    df_filtered = df_filtered[df_filtered['İNDİKTEN SONRA NEREYE GİTTİ'].isin(hedef_filter)]
+st.success(f"✅ Veri başarıyla yüklendi! Toplam {df.shape[0]:,} yolcu kaydı.")
 
 # ------------------------------
-# ANA SAYFA
+# VERİYİ HAZIRLA
 # ------------------------------
-st.title("🚢 Üsküdar – Beşiktaş Vapur Hattı Analiz Dashboard")
-st.markdown(f"📅 **Veri Tarihi:** {df['Tarih'].min()} | **Toplam Kayıt:** {df.shape[0]:,}")
+df_uskudar = df[df['YÖN'] == 'ÜSKÜDAR → BEŞİKTAŞ']
+df_besiktas = df[df['YÖN'] == 'BEŞİKTAŞ → ÜSKÜDAR']
 
-# Özet Kartlar
+# Gidilen yerleri temizle
+df['Hedef_Temiz'] = df['İNDİKTEN SONRA NEREYE GİTTİ'].fillna('')
+df['Hedef_Temiz'] = df['Hedef_Temiz'].apply(lambda x: str(x).strip() if x not in ['', 'BİLİNMİYOR'] else '')
+df['Hedef_Temiz'] = df['Hedef_Temiz'].replace('', 'Belirtilmemiş')
+
+# ------------------------------
+# SIDEBAR - FİLTRELEME
+# ------------------------------
+st.sidebar.header("🔍 Filtreler")
+selected_yon = st.sidebar.selectbox(
+    "Yön Seçiniz", 
+    ['Tümü', 'ÜSKÜDAR → BEŞİKTAŞ', 'BEŞİKTAŞ → ÜSKÜDAR']
+)
+
+# Saat aralığı seçimi
+saat_araligi = st.sidebar.slider(
+    "Saat Aralığı Seçiniz",
+    min_value=0, max_value=23, value=(6, 22)
+)
+
+# Filtrele
+filtre_df = df.copy()
+if selected_yon != 'Tümü':
+    filtre_df = filtre_df[filtre_df['YÖN'] == selected_yon]
+filtre_df = filtre_df[(filtre_df['Saat'] >= saat_araligi[0]) & (filtre_df['Saat'] <= saat_araligi[1])]
+
+# ------------------------------
+# METRİK KARTLARI
+# ------------------------------
+st.subheader("📊 Özet İstatistikler")
+
 col1, col2, col3, col4, col5 = st.columns(5)
 
-df_uskudar = df_filtered[df_filtered['YÖN'] == 'ÜSKÜDAR → BEŞİKTAŞ']
-df_besiktas = df_filtered[df_filtered['YÖN'] == 'BEŞİKTAŞ → ÜSKÜDAR']
+toplam = len(filtre_df)
+ortalama = toplam / 24 if toplam > 0 else 0
+aktarma = len(filtre_df[filtre_df['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'] == 1])
+gitmeyen = toplam - aktarma
 
-col1.metric(
-    "🚢 Üsküdar→Beşiktaş", 
-    f"{df_uskudar.shape[0]:,}",
-    delta=f"{df_uskudar.shape[0]/24:.1f}/saat"
-)
-col2.metric(
-    "🚢 Beşiktaş→Üsküdar", 
-    f"{df_besiktas.shape[0]:,}",
-    delta=f"{df_besiktas.shape[0]/24:.1f}/saat"
-)
+# En yoğun saat
+if toplam > 0:
+    en_yogun_saat = filtre_df.groupby('Saat').size().idxmax()
+    en_yogun_saat_dilimi = f"{en_yogun_saat:02d}:00"
+else:
+    en_yogun_saat_dilimi = "-"
 
-# Aktarma istatistikleri
-aktarma_u = df_uskudar[df_uskudar['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'] == 1].shape[0]
-aktarma_b = df_besiktas[df_besiktas['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'] == 1].shape[0]
+# En çok gidilen yer
+if toplam > 0:
+    en_cok_yer = filtre_df['Hedef_Temiz'].value_counts().idxmax()
+else:
+    en_cok_yer = "-"
 
-col3.metric(
-    "🔄 Aktarma Yapan (U→B)", 
-    f"{aktarma_u:,}",
-    delta=f"{aktarma_u/df_uskudar.shape[0]*100:.1f}%" if df_uskudar.shape[0] > 0 else "0%"
-)
-col4.metric(
-    "🔄 Aktarma Yapan (B→U)", 
-    f"{aktarma_b:,}",
-    delta=f"{aktarma_b/df_besiktas.shape[0]*100:.1f}%" if df_besiktas.shape[0] > 0 else "0%"
-)
-
-# Gitmeyenler
-gitmeyen_u = df_uskudar[df_uskudar['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'] == 0].shape[0]
-gitmeyen_b = df_besiktas[df_besiktas['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'] == 0].shape[0]
-col5.metric(
-    "🚫 Gitmeyen (Toplam)", 
-    f"{gitmeyen_u + gitmeyen_b:,}",
-    delta=f"U→B: {gitmeyen_u}, B→U: {gitmeyen_b}"
-)
-
-st.markdown("---")
+col1.metric("📌 Toplam Yolcu", f"{toplam:,}")
+col2.metric("⏱️ Ortalama/Saat", f"{ortalama:.1f}")
+col3.metric("🔄 Aktarma Yapan", f"{aktarma:,} (%{aktarma/toplam*100:.0f})" if toplam > 0 else "0")
+col4.metric("🚫 Gitmeyen", f"{gitmeyen:,} (%{gitmeyen/toplam*100:.0f})" if toplam > 0 else "0")
+col5.metric("🏆 En Yoğun Saat", en_yogun_saat_dilimi)
 
 # ------------------------------
 # GRAFİKLER
 # ------------------------------
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Saatlik Biniş", 
-    "🗺️ Gidilen Yerler", 
-    "🔥 Isı Haritası",
-    "📈 Detaylı Analiz"
-])
+st.subheader("📈 Zaman Serisi ve Dağılım Analizleri")
+
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Saatlik Biniş", "🎯 Gidilen Yerler", "📍 Nereden Geldi", "🔄 Aktarma Analizi"])
 
 with tab1:
-    col1, col2 = st.columns(2)
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     
-    with col1:
-        st.subheader("Üsküdar → Beşiktaş")
-        binme_u = df_uskudar.groupby('Saat').size().reset_index(name='Yolcu')
-        fig_u, ax_u = plt.subplots(figsize=(10, 5))
-        ax_u.bar(binme_u['Saat'], binme_u['Yolcu'], color='#1E88E5', edgecolor='white', alpha=0.8)
-        ax_u.set_xlabel('Saat', fontsize=12)
-        ax_u.set_ylabel('Yolcu Sayısı', fontsize=12)
-        ax_u.set_xticks(range(0, 24))
-        ax_u.grid(True, alpha=0.3)
-        ax_u.set_title(f'Toplam: {df_uskudar.shape[0]:,} yolcu', fontsize=14)
-        st.pyplot(fig_u)
+    # Üsküdar yönü
+    binme_u = df_uskudar.groupby('Saat').size().reset_index(name='Yolcu')
+    axes[0].bar(binme_u['Saat'], binme_u['Yolcu'], color='#1E88E5', edgecolor='black', alpha=0.8)
+    axes[0].set_title('Üsküdar → Beşiktaş', fontsize=14, fontweight='bold')
+    axes[0].set_xlabel('Saat')
+    axes[0].set_ylabel('Yolcu Sayısı')
+    axes[0].grid(True, alpha=0.3)
+    axes[0].set_xticks(range(0, 24))
+    axes[0].axvline(x=saat_araligi[0], color='red', linestyle='--', alpha=0.5)
+    axes[0].axvline(x=saat_araligi[1], color='red', linestyle='--', alpha=0.5)
     
-    with col2:
-        st.subheader("Beşiktaş → Üsküdar")
-        binme_b = df_besiktas.groupby('Saat').size().reset_index(name='Yolcu')
-        fig_b, ax_b = plt.subplots(figsize=(10, 5))
-        ax_b.bar(binme_b['Saat'], binme_b['Yolcu'], color='#FF9800', edgecolor='white', alpha=0.8)
-        ax_b.set_xlabel('Saat', fontsize=12)
-        ax_b.set_ylabel('Yolcu Sayısı', fontsize=12)
-        ax_b.set_xticks(range(0, 24))
-        ax_b.grid(True, alpha=0.3)
-        ax_b.set_title(f'Toplam: {df_besiktas.shape[0]:,} yolcu', fontsize=14)
-        st.pyplot(fig_b)
+    # Beşiktaş yönü
+    binme_b = df_besiktas.groupby('Saat').size().reset_index(name='Yolcu')
+    axes[1].bar(binme_b['Saat'], binme_b['Yolcu'], color='#FF9800', edgecolor='black', alpha=0.8)
+    axes[1].set_title('Beşiktaş → Üsküdar', fontsize=14, fontweight='bold')
+    axes[1].set_xlabel('Saat')
+    axes[1].set_ylabel('Yolcu Sayısı')
+    axes[1].grid(True, alpha=0.3)
+    axes[1].set_xticks(range(0, 24))
+    axes[1].axvline(x=saat_araligi[0], color='red', linestyle='--', alpha=0.5)
+    axes[1].axvline(x=saat_araligi[1], color='red', linestyle='--', alpha=0.5)
+    
+    plt.tight_layout()
+    st.pyplot(fig)
 
 with tab2:
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("Üsküdar → Beşiktaş - En Çok Gidilen Yerler")
-        gidis_u = df_uskudar[df_uskudar['İNDİKTEN SONRA NEREYE GİTTİ'].notna()]
-        gidis_u = gidis_u[gidis_u['İNDİKTEN SONRA NEREYE GİTTİ'] != '']
-        gidis_u = gidis_u[gidis_u['İNDİKTEN SONRA NEREYE GİTTİ'] != 'BİLİNMİYOR']
-        
+        st.caption("Üsküdar → Beşiktaş - En Çok Gidilen Yerler")
+        gidis_u = df_uskudar[df_uskudar['Hedef_Temiz'] != 'Belirtilmemiş']
         if not gidis_u.empty:
-            top_u = gidis_u.groupby('İNDİKTEN SONRA NEREYE GİTTİ').size().nlargest(10).reset_index(name='Kisi')
-            fig_u, ax_u = plt.subplots(figsize=(10, 5))
-            colors = plt.cm.Blues(np.linspace(0.3, 0.9, len(top_u)))[::-1]
-            ax_u.barh(top_u['İNDİKTEN SONRA NEREYE GİTTİ'], top_u['Kisi'], color=colors)
-            ax_u.set_xlabel('Kişi Sayısı', fontsize=12)
-            ax_u.set_title('En Çok Gidilen 10 Yer', fontsize=14)
-            st.pyplot(fig_u)
+            top_u = gidis_u['Hedef_Temiz'].value_counts().head(10)
+            fig, ax = plt.subplots(figsize=(8, 6))
+            top_u.plot(kind='barh', ax=ax, color='#1E88E5')
+            ax.set_xlabel('Kişi Sayısı')
+            ax.set_title('Top 10 Gidilen Yer')
+            st.pyplot(fig)
         else:
-            st.info("Bu yönde gidilen yer verisi yok.")
+            st.info("Veri bulunamadı.")
     
     with col2:
-        st.subheader("Beşiktaş → Üsküdar - En Çok Gidilen Yerler")
-        gidis_b = df_besiktas[df_besiktas['İNDİKTEN SONRA NEREYE GİTTİ'].notna()]
-        gidis_b = gidis_b[gidis_b['İNDİKTEN SONRA NEREYE GİTTİ'] != '']
-        gidis_b = gidis_b[gidis_b['İNDİKTEN SONRA NEREYE GİTTİ'] != 'BİLİNMİYOR']
-        
+        st.caption("Beşiktaş → Üsküdar - En Çok Gidilen Yerler")
+        gidis_b = df_besiktas[df_besiktas['Hedef_Temiz'] != 'Belirtilmemiş']
         if not gidis_b.empty:
-            top_b = gidis_b.groupby('İNDİKTEN SONRA NEREYE GİTTİ').size().nlargest(10).reset_index(name='Kisi')
-            fig_b, ax_b = plt.subplots(figsize=(10, 5))
-            colors = plt.cm.Oranges(np.linspace(0.3, 0.9, len(top_b)))[::-1]
-            ax_b.barh(top_b['İNDİKTEN SONRA NEREYE GİTTİ'], top_b['Kisi'], color=colors)
-            ax_b.set_xlabel('Kişi Sayısı', fontsize=12)
-            ax_b.set_title('En Çok Gidilen 10 Yer', fontsize=14)
-            st.pyplot(fig_b)
+            top_b = gidis_b['Hedef_Temiz'].value_counts().head(10)
+            fig, ax = plt.subplots(figsize=(8, 6))
+            top_b.plot(kind='barh', ax=ax, color='#FF9800')
+            ax.set_xlabel('Kişi Sayısı')
+            ax.set_title('Top 10 Gidilen Yer')
+            st.pyplot(fig)
         else:
-            st.info("Bu yönde gidilen yer verisi yok.")
+            st.info("Veri bulunamadı.")
 
 with tab3:
-    st.subheader("🔥 Saat - Hedef Isı Haritası")
+    col1, col2 = st.columns(2)
     
-    # Isı haritası için pivot
-    gidis_all = df_filtered[df_filtered['İNDİKTEN SONRA NEREYE GİTTİ'].notna()]
-    gidis_all = gidis_all[gidis_all['İNDİKTEN SONRA NEREYE GİTTİ'] != '']
-    gidis_all = gidis_all[gidis_all['İNDİKTEN SONRA NEREYE GİTTİ'] != 'BİLİNMİYOR']
+    with col1:
+        st.caption("Üsküdar → Beşiktaş - Geliş Hatları")
+        gelis_u = df_uskudar[df_uskudar['MERKEZE GELDİĞİ ARACIN HATTI'].notna()]
+        gelis_u = gelis_u[gelis_u['MERKEZE GELDİĞİ ARACIN HATTI'] != '']
+        if not gelis_u.empty:
+            top_gelis_u = gelis_u['MERKEZE GELDİĞİ ARACIN HATTI'].value_counts().head(10)
+            fig, ax = plt.subplots(figsize=(8, 6))
+            top_gelis_u.plot(kind='barh', ax=ax, color='#1E88E5')
+            ax.set_xlabel('Kişi Sayısı')
+            ax.set_title('Top 10 Geliş Hattı')
+            st.pyplot(fig)
+        else:
+            st.info("Veri bulunamadı.")
     
-    if not gidis_all.empty:
-        # Top 10 hedef seç
-        top_hedefler = gidis_all.groupby('İNDİKTEN SONRA NEREYE GİTTİ').size().nlargest(10).index
-        gidis_top = gidis_all[gidis_all['İNDİKTEN SONRA NEREYE GİTTİ'].isin(top_hedefler)]
-        
-        pivot = gidis_top.groupby(['Saat', 'İNDİKTEN SONRA NEREYE GİTTİ']).size().unstack(fill_value=0)
+    with col2:
+        st.caption("Beşiktaş → Üsküdar - Geliş Hatları")
+        gelis_b = df_besiktas[df_besiktas['MERKEZE GELDİĞİ ARACIN HATTI'].notna()]
+        gelis_b = gelis_b[gelis_b['MERKEZE GELDİĞİ ARACIN HATTI'] != '']
+        if not gelis_b.empty:
+            top_gelis_b = gelis_b['MERKEZE GELDİĞİ ARACIN HATTI'].value_counts().head(10)
+            fig, ax = plt.subplots(figsize=(8, 6))
+            top_gelis_b.plot(kind='barh', ax=ax, color='#FF9800')
+            ax.set_xlabel('Kişi Sayısı')
+            ax.set_title('Top 10 Geliş Hattı')
+            st.pyplot(fig)
+        else:
+            st.info("Veri bulunamadı.")
+
+with tab4:
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Aktarma oranı - Üsküdar
+        aktarma_u = len(df_uskudar[df_uskudar['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'] == 1])
+        gitmeyen_u = len(df_uskudar) - aktarma_u
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.pie([aktarma_u, gitmeyen_u], labels=['Aktarma Yapan', 'Gitmeyen'], 
+               autopct='%1.1f%%', colors=['#4CAF50', '#FF5722'], startangle=90)
+        ax.set_title('Üsküdar → Beşiktaş - Aktarma Oranı')
+        st.pyplot(fig)
+    
+    with col2:
+        # Aktarma oranı - Beşiktaş
+        aktarma_b = len(df_besiktas[df_besiktas['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'] == 1])
+        gitmeyen_b = len(df_besiktas) - aktarma_b
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.pie([aktarma_b, gitmeyen_b], labels=['Aktarma Yapan', 'Gitmeyen'], 
+               autopct='%1.1f%%', colors=['#4CAF50', '#FF5722'], startangle=90)
+        ax.set_title('Beşiktaş → Üsküdar - Aktarma Oranı')
+        st.pyplot(fig)
+
+# ------------------------------
+# ISI HARİTASI (Saat x Hedef)
+# ------------------------------
+st.subheader("🔥 Isı Haritası - Saat x Gidilen Yer (Üsküdar → Beşiktaş)")
+
+# Pivot tablo oluştur
+if not df_uskudar.empty:
+    pivot_data = df_uskudar[df_uskudar['Hedef_Temiz'] != 'Belirtilmemiş']
+    if not pivot_data.empty:
+        pivot = pd.crosstab(pivot_data['Hedef_Temiz'], pivot_data['Saat'])
+        # En çok gidilen 10 yer ile sınırla
+        top_hedefler = pivot.sum(axis=1).nlargest(10).index
+        pivot = pivot.loc[top_hedefler]
         
         fig, ax = plt.subplots(figsize=(14, 8))
-        im = ax.imshow(pivot.values, cmap='YlOrRd', aspect='auto')
-        ax.set_xticks(range(len(pivot.columns)))
-        ax.set_xticklabels(pivot.columns, rotation=45, ha='right')
-        ax.set_yticks(range(len(pivot.index)))
-        ax.set_yticklabels(pivot.index)
-        ax.set_xlabel('Gidilen Yer', fontsize=12)
-        ax.set_ylabel('Saat', fontsize=12)
-        ax.set_title('Saat - Hedef Yoğunluk Haritası', fontsize=14)
-        plt.colorbar(im, ax=ax, label='Yolcu Sayısı')
+        sns.heatmap(pivot, annot=True, fmt='d', cmap='Blues', ax=ax, cbar_kws={'label': 'Yolcu Sayısı'})
+        ax.set_title('Saat × Gidilen Yer (Üsküdar → Beşiktaş)', fontsize=14)
+        ax.set_xlabel('Saat')
+        ax.set_ylabel('Gidilen Yer')
         st.pyplot(fig)
     else:
         st.info("Isı haritası için yeterli veri yok.")
-
-with tab4:
-    st.subheader("📈 Detaylı Analiz")
-    
-    # Saatlik yoğunluk tablosu
-    st.markdown("### 📊 Saatlik Yoğunluk")
-    saatlik = df_filtered.groupby(['Saat', 'YÖN']).size().reset_index(name='Yolcu')
-    saatlik_pivot = saatlik.pivot(index='Saat', columns='YÖN', values='Yolcu').fillna(0)
-    saatlik_pivot['Toplam'] = saatlik_pivot.sum(axis=1)
-    st.dataframe(saatlik_pivot, use_container_width=True)
-    
-    # En yoğun saatler
-    st.markdown("### ⏰ En Yoğun Saatler")
-    en_yogun = saatlik_pivot.nlargest(5, 'Toplam')[['Toplam']]
-    st.dataframe(en_yogun, use_container_width=True)
-    
-    # Hedef istatistikleri
-    st.markdown("### 🎯 Hedef İstatistikleri")
-    hedef_istatistik = df_filtered[df_filtered['İNDİKTEN SONRA NEREYE GİTTİ'].notna()]
-    hedef_istatistik = hedef_istatistik[hedef_istatistik['İNDİKTEN SONRA NEREYE GİTTİ'] != '']
-    hedef_istatistik = hedef_istatistik[hedef_istatistik['İNDİKTEN SONRA NEREYE GİTTİ'] != 'BİLİNMİYOR']
-    
-    if not hedef_istatistik.empty:
-        hedef_ozet = hedef_istatistik.groupby(['YÖN', 'İNDİKTEN SONRA NEREYE GİTTİ']).size().reset_index(name='Kisi')
-        hedef_ozet = hedef_ozet.sort_values(['YÖN', 'Kisi'], ascending=[True, False])
-        st.dataframe(hedef_ozet, use_container_width=True)
-    else:
-        st.info("Hedef verisi bulunamadı.")
+else:
+    st.info("Bu yönde veri bulunamadı.")
 
 # ------------------------------
-# TAHMİN ARACI (GELİŞMİŞ)
+# TAHMİN ARACI (PROFESYONEL)
 # ------------------------------
-st.markdown("---")
-st.header("🔮 Gelişmiş Tahmin Aracı")
+st.subheader("🔮 Akıllı Tahmin Aracı")
 
-col_pred1, col_pred2, col_pred3 = st.columns(3)
+st.markdown("""
+<div class="insight-box">
+    💡 <b>Nasıl çalışır?</b> Seçtiğiniz yön, hedef ve saat için geçmiş verilere göre 
+    tahmini yolcu sayısını hesaplar. Ayrıca o saatteki genel yoğunluk ve trend bilgisi sunar.
+</div>
+""", unsafe_allow_html=True)
 
-with col_pred1:
-    pred_yon = st.selectbox(
-        "📍 Yön Seçiniz",
-        options=['ÜSKÜDAR → BEŞİKTAŞ', 'BEŞİKTAŞ → ÜSKÜDAR'],
-        key='pred_yon'
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    tahmin_yon = st.selectbox(
+        "📍 Yön", 
+        ['ÜSKÜDAR → BEŞİKTAŞ', 'BEŞİKTAŞ → ÜSKÜDAR'],
+        key='tahmin_yon'
     )
 
-with col_pred2:
-    pred_hedef_list = df[df['YÖN'] == pred_yon]['İNDİKTEN SONRA NEREYE GİTTİ'].unique()
-    pred_hedef_list = [h for h in pred_hedef_list if h not in ['', 'BİLİNMİYOR']]
-    pred_hedef = st.selectbox(
-        "🎯 Gidilecek Yer Seçiniz",
-        options=sorted(pred_hedef_list),
-        key='pred_hedef'
-    )
+# Hedef listesini güncelle (NaN sorunu çözüldü)
+hedef_series = df[df['İNDİKTEN SONRA NEREYE GİTTİ'].notna()]['İNDİKTEN SONRA NEREYE GİTTİ']
+hedef_series = hedef_series[hedef_series != '']
+hedef_series = hedef_series[hedef_series != 'BİLİNMİYOR']
+hedef_list = sorted([str(h) for h in hedef_series.unique() if pd.notna(h) and str(h).strip()])
 
-with col_pred3:
-    pred_saat = st.slider(
-        "⏰ Saat Seçiniz",
-        min_value=0, max_value=23, value=8, key='pred_saat'
-    )
+with col2:
+    tahmin_hedef = st.selectbox("🎯 Gidilecek Yer", hedef_list, key='tahmin_hedef')
+
+with col3:
+    tahmin_saat = st.slider("⏰ Saat", 0, 23, 8, key='tahmin_saat')
 
 # Tahmin hesapla
-if pred_hedef:
-    # Seçilen kriterler için veri
-    pred_data = df[
-        (df['YÖN'] == pred_yon) &
-        (df['Saat'] == pred_saat) &
-        (df['İNDİKTEN SONRA NEREYE GİTTİ'] == pred_hedef)
-    ]
+tahmin_data = df[
+    (df['YÖN'] == tahmin_yon) &
+    (df['Saat'] == tahmin_saat) &
+    (df['İNDİKTEN SONRA NEREYE GİTTİ'] == tahmin_hedef)
+]
+tahmin_sayisi = len(tahmin_data)
+
+# Aynı saatteki toplam biniş
+toplam_saat = df[(df['YÖN'] == tahmin_yon) & (df['Saat'] == tahmin_saat)].shape[0]
+
+# Tahmin metrikleri
+st.markdown("---")
+col1, col2, col3, col4 = st.columns(4)
+
+col1.metric("🎯 Tahmini Yolcu", f"{tahmin_sayisi} kişi", 
+            delta=f"%{(tahmin_sayisi/toplam_saat*100) if toplam_saat > 0 else 0:.0f} of total" if toplam_saat > 0 else None)
+
+col2.metric("📊 Toplam Biniş (Bu Saat)", f"{toplam_saat} kişi")
+
+# Son 3 saatin ortalaması (trend)
+onceki_saatler = df[(df['YÖN'] == tahmin_yon) & (df['Saat'].between(max(0, tahmin_saat-2), tahmin_saat-1))]
+onceki_ortalama = onceki_saatler.groupby('Saat').size().mean() if not onceki_saatler.empty else 0
+col3.metric("📈 Trend (Önceki 3 Saat)", f"{onceki_ortalama:.1f} kişi/ort")
+
+# En yoğun saat
+yogun_saat = df[df['YÖN'] == tahmin_yon].groupby('Saat').size().idxmax() if not df[df['YÖN'] == tahmin_yon].empty else 0
+col4.metric("🏆 En Yoğun Saat", f"{yogun_saat:02d}:00")
+
+# Tahmin detay grafiği
+st.markdown("---")
+st.caption("📊 Seçilen saatteki güncel dağılım")
+
+# Seçilen saatteki tüm hedefler
+saat_hedefler = df[
+    (df['YÖN'] == tahmin_yon) & 
+    (df['Saat'] == tahmin_saat) & 
+    (df['İNDİKTEN SONRA NEREYE GİTTİ'].notna()) &
+    (df['İNDİKTEN SONRA NEREYE GİTTİ'] != '') &
+    (df['İNDİKTEN SONRA NEREYE GİTTİ'] != 'BİLİNMİYOR')
+]
+saat_hedefler['Hedef_Temiz'] = saat_hedefler['İNDİKTEN SONRA NEREYE GİTTİ']
+
+if not saat_hedefler.empty:
+    hedef_dist = saat_hedefler['Hedef_Temiz'].value_counts().head(10)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    hedef_dist.plot(kind='barh', ax=ax, color='#1E88E5')
+    ax.set_xlabel('Kişi Sayısı')
+    ax.set_title(f'{tahmin_yon} - {tahmin_saat:02d}:00 Saatindeki Hedef Dağılımı')
+    ax.axvline(x=tahmin_sayisi, color='red', linestyle='--', linewidth=2, label='Tahmininiz')
+    ax.legend()
+    st.pyplot(fig)
+else:
+    st.info("Bu saatte aktarma yapan yolcu verisi bulunamadı.")
+
+# ------------------------------
+# DETAYLI TABLOLAR
+# ------------------------------
+with st.expander("📋 Detaylı Veri Tabloları"):
+    tab1, tab2, tab3, tab4 = st.tabs(["Üsküdar→Beşiktaş", "Beşiktaş→Üsküdar", "Geliş Hatları", "Gitmeyenler"])
     
-    # Tüm saatler için ortalama
-    all_hours_data = df[
-        (df['YÖN'] == pred_yon) &
-        (df['İNDİKTEN SONRA NEREYE GİTTİ'] == pred_hedef)
-    ]
+    with tab1:
+        st.dataframe(df_uskudar.head(100), use_container_width=True)
     
-    pred_count = len(pred_data)
-    avg_count = len(all_hours_data) / 24 if len(all_hours_data) > 0 else 0
-    max_count = all_hours_data.groupby('Saat').size().max() if len(all_hours_data) > 0 else 0
-    min_count = all_hours_data.groupby('Saat').size().min() if len(all_hours_data) > 0 else 0
+    with tab2:
+        st.dataframe(df_besiktas.head(100), use_container_width=True)
     
-    # Yoğunluk seviyesi
-    if pred_count >= 5:
-        level = "🔴 Çok Yoğun"
-        color = "#FF4444"
-    elif pred_count >= 3:
-        level = "🟡 Orta"
-        color = "#FFA500"
-    elif pred_count >= 1:
-        level = "🟢 Düşük"
-        color = "#44AA44"
-    else:
-        level = "⚪ Boş"
-        color = "#888888"
+    with tab3:
+        gelis_df = df[df['MERKEZE GELDİĞİ ARACIN HATTI'].notna()]
+        gelis_df = gelis_df[gelis_df['MERKEZE GELDİĞİ ARACIN HATTI'] != '']
+        st.dataframe(gelis_df.groupby(['YÖN', 'MERKEZE GELDİĞİ ARACIN HATTI']).size().reset_index(name='Kisi'), use_container_width=True)
     
-    # Sonuçları göster
-    st.markdown("---")
-    st.subheader("📊 Tahmin Sonuçları")
-    
-    col_res1, col_res2, col_res3, col_res4, col_res5 = st.columns(5)
-    col_res1.metric("📊 Tahmini Yolcu", f"{pred_count} kişi", delta=f"Saat {pred_saat}:00")
-    col_res2.metric("📈 Günlük Ortalama", f"{avg_count:.1f} kişi")
-    col_res3.metric("📈 Maksimum (Saatlik)", f"{max_count} kişi")
-    col_res4.metric("📉 Minimum (Saatlik)", f"{min_count} kişi")
-    col_res5.metric("🚦 Yoğunluk", level)
-    
-    # Saatlik dağılım grafiği (tahmin için)
-    if len(all_hours_data) > 0:
-        st.markdown("### 📈 Saatlik Dağılım (Tüm Gün)")
-        saatlik_dagilim = all_hours_data.groupby('Saat').size().reset_index(name='Yolcu')
-        fig, ax = plt.subplots(figsize=(12, 4))
-        ax.bar(saatlik_dagilim['Saat'], saatlik_dagilim['Yolcu'], color='#1E88E5', alpha=0.7)
-        ax.axvline(x=pred_saat, color='red', linestyle='--', linewidth=2, label='Seçilen Saat')
-        ax.set_xlabel('Saat', fontsize=12)
-        ax.set_ylabel('Yolcu Sayısı', fontsize=12)
-        ax.set_xticks(range(0, 24))
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        st.pyplot(fig)
-    
-    # Detaylı tablo
-    with st.expander("📋 Detaylı Tahmin Verileri"):
-        st.dataframe(all_hours_data[['Saat', 'MERKEZDEN GEMİYE BİNİŞ', 'YÖN']].head(20), use_container_width=True)
+    with tab4:
+        gitmeyen_df = df[df['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'] == 0]
+        st.dataframe(gitmeyen_df.groupby('YÖN').size().reset_index(name='Kisi'), use_container_width=True)
 
 # ------------------------------
 # FOOTER
 # ------------------------------
 st.markdown("---")
-st.markdown(
-    """
-    <div style='text-align: center; color: gray; padding: 20px;'>
-    🚢 Üsküdar – Beşiktaş Vapur Hattı Analiz Dashboard | Veri Tarihi: {}
-    </div>
-    """.format(df['Tarih'].min()),
-    unsafe_allow_html=True
-)
+st.caption(f"📅 Son Güncelleme: {datetime.now().strftime('%d.%m.%Y %H:%M')} | Veri: {df.shape[0]:,} kayıt")
