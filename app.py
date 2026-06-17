@@ -13,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CSS ile renk ve stil iyileştirmeleri
+# CSS
 st.markdown("""
 <style>
     .main-header {
@@ -71,10 +71,24 @@ def load_data(file):
     df['Saat_Dilimi'] = df['Saat'].apply(lambda x: f"{x:02d}:00–{x:02d}:59")
     df['YÖN'] = df['YÖN'].str.strip()
     
-    # Hedef temizleme (NaN ve boşları filtrele)
-    df['Hedef_Temiz'] = df['İNDİKTEN SONRA NEREYE GİTTİ'].apply(
-        lambda x: str(x).strip() if pd.notna(x) and str(x).strip() not in ['', 'BİLİNMİYOR', 'nan'] else None
-    )
+    # AKTARMA durumunu netleştir
+    # 0 = Aktarma yok, 1 = Aktarma var
+    df['AKTARMA'] = df['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'].astype(float).astype(int)
+    
+    # Hedef temizleme
+    def temizle_hedef(x):
+        if pd.isna(x):
+            return None
+        x_str = str(x).strip()
+        if x_str in ['', 'BİLİNMİYOR', 'nan', 'None']:
+            return None
+        return x_str
+    
+    df['Hedef_Temiz'] = df['İNDİKTEN SONRA NEREYE GİTTİ'].apply(temizle_hedef)
+    
+    # Aktarma durumunu güncelle: Hedef varsa ve AKTARMA=0 ise, aslında aktarma var demektir.
+    # Bu durumu düzeltelim
+    df.loc[(df['Hedef_Temiz'].notna()) & (df['AKTARMA'] == 0), 'AKTARMA'] = 1
     
     return df
 
@@ -87,21 +101,18 @@ st.success(f"✅ Veri başarıyla yüklendi! Toplam {df.shape[0]:,} satır.")
 with st.sidebar:
     st.header("🔍 Filtreler")
     
-    # Yön seçimi
     yon_filter = st.multiselect(
         "Yön Seçiniz",
         options=df['YÖN'].unique(),
         default=df['YÖN'].unique()
     )
     
-    # Saat aralığı
     saat_range = st.slider(
         "Saat Aralığı",
         min_value=0, max_value=23,
         value=(6, 22)
     )
     
-    # Hedef filtresi (opsiyonel)
     hedef_list = df[df['Hedef_Temiz'].notna()]['Hedef_Temiz'].unique()
     hedef_list = sorted([h for h in hedef_list if h and h != 'None'])
     hedef_filter = st.multiselect(
@@ -124,21 +135,21 @@ if hedef_filter:
 # ------------------------------
 st.subheader("📊 Özet İstatistikler")
 
-col1, col2, col3, col4, col5 = st.columns(5)
-
 total = len(filtered_df)
 total_uskudar = len(filtered_df[filtered_df['YÖN'] == 'ÜSKÜDAR → BEŞİKTAŞ'])
 total_besiktas = len(filtered_df[filtered_df['YÖN'] == 'BEŞİKTAŞ → ÜSKÜDAR'])
 
-# Aktarma yapan ve gitmeyen
-aktarma = len(filtered_df[filtered_df['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'] == 1])
-gitmeyen = len(filtered_df[filtered_df['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'] == 0])
+# Aktarma yapan: AKTARMA == 1 (Hedef dolu)
+aktarma = len(filtered_df[filtered_df['AKTARMA'] == 1])
+# Gitmeyen: AKTARMA == 0 (Hedef boş veya BİLİNMİYOR)
+gitmeyen = len(filtered_df[filtered_df['AKTARMA'] == 0])
 
+col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("Toplam Yolcu", f"{total:,}")
 col2.metric("Üsküdar→Beşiktaş", f"{total_uskudar:,}")
 col3.metric("Beşiktaş→Üsküdar", f"{total_besiktas:,}")
-col4.metric("Aktarma Yapan", f"{aktarma:,}", delta=f"%{aktarma/total*100:.1f}" if total > 0 else "0%")
-col5.metric("Gitmeyen (Aktarma Yok)", f"{gitmeyen:,}", delta=f"%{gitmeyen/total*100:.1f}" if total > 0 else "0%")
+col4.metric("✅ Aktarma Yapan", f"{aktarma:,}", delta=f"%{aktarma/total*100:.1f}" if total > 0 else "0%")
+col5.metric("🚫 Gitmeyen (Aktarma Yok)", f"{gitmeyen:,}", delta=f"%{gitmeyen/total*100:.1f}" if total > 0 else "0%")
 
 # ------------------------------
 # İKİ YÖN İÇİN GRAFİKLER
@@ -156,7 +167,6 @@ axes[0].set_xlabel('Saat', fontsize=12)
 axes[0].set_ylabel('Yolcu Sayısı', fontsize=12)
 axes[0].grid(True, alpha=0.3)
 axes[0].set_xticks(range(0, 24))
-# Tepe noktasını işaretle
 if not binme_u.empty:
     max_idx = binme_u['Yolcu'].idxmax()
     axes[0].axvline(binme_u.loc[max_idx, 'Saat'], color='red', linestyle='--', alpha=0.5, label='Tepe Saat')
@@ -180,7 +190,7 @@ plt.tight_layout()
 st.pyplot(fig)
 
 # ------------------------------
-# TAHMİN ARACI (GELİŞMİŞ)
+# TAHMİN ARACI
 # ------------------------------
 st.header("🔮 Gelişmiş Tahmin Aracı")
 
@@ -195,7 +205,6 @@ with st.container():
         )
     
     with col_b:
-        # Hedef listesini güncelle
         hedef_list_tahmin = df[df['YÖN'] == tahmin_yon]['Hedef_Temiz'].dropna().unique()
         hedef_list_tahmin = sorted([h for h in hedef_list_tahmin if h and h != 'None'])
         tahmin_hedef = st.selectbox(
@@ -216,9 +225,7 @@ with st.container():
         st.write("")
         tahmin_button = st.button("🚀 Tahmin Yap", use_container_width=True)
 
-# Tahmin sonuçları
 if tahmin_button and tahmin_hedef != 'Veri Yok':
-    # Seçilen kriterlere göre filtrele
     tahmin_df = df[
         (df['YÖN'] == tahmin_yon) &
         (df['Hedef_Temiz'] == tahmin_hedef) &
@@ -226,28 +233,24 @@ if tahmin_button and tahmin_hedef != 'Veri Yok':
     ]
     tahmin_sayisi = len(tahmin_df)
     
-    # Aynı hedef için saatlik ortalama
     saatlik_ortalama = df[
         (df['YÖN'] == tahmin_yon) &
         (df['Hedef_Temiz'] == tahmin_hedef)
     ].groupby('Saat').size().mean()
     
-    # En yoğun saat
     en_yogun = df[
         (df['YÖN'] == tahmin_yon) &
         (df['Hedef_Temiz'] == tahmin_hedef)
     ].groupby('Saat').size().idxmax() if not df.empty else None
     
-    # Sonuçları göster
     st.markdown("---")
     col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-    col_r1.metric("📊 Tahmini Yolcu", f"{tahmin_sayisi} kişi", delta=f"Seçilen saat için")
-    col_r2.metric("📈 Saatlik Ortalama", f"{saatlik_ortalama:.1f} kişi", delta="Tüm saatler")
-    col_r3.metric("🔥 En Yoğun Saat", f"{en_yogun}:00" if en_yogun is not None else "-", delta="Bu hedef için")
-    col_r4.metric("📌 Toplam Yolcu (Tüm Saatler)", 
+    col_r1.metric("📊 Tahmini Yolcu", f"{tahmin_sayisi} kişi")
+    col_r2.metric("📈 Saatlik Ortalama", f"{saatlik_ortalama:.1f} kişi")
+    col_r3.metric("🔥 En Yoğun Saat", f"{en_yogun}:00" if en_yogun is not None else "-")
+    col_r4.metric("📌 Toplam (Tüm Saatler)", 
                   f"{df[(df['YÖN'] == tahmin_yon) & (df['Hedef_Temiz'] == tahmin_hedef)].shape[0]:,} kişi")
     
-    # Hedefin saatlik trend grafiği
     trend_df = df[
         (df['YÖN'] == tahmin_yon) &
         (df['Hedef_Temiz'] == tahmin_hedef)
@@ -273,15 +276,15 @@ else:
 # ------------------------------
 st.subheader("📋 Detaylı Veri Tabloları")
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📍 Nereden Geldi?", 
-    "🎯 Nereye Gitti?", 
-    "🚫 Gitmeyenler", 
+    "🎯 Nereye Gitti?",
+    "✅ Aktarma Yapanlar",
+    "🚫 Gitmeyenler",
     "📊 Tüm Veri"
 ])
 
 with tab1:
-    # Nereden geldi (geliş hatları)
     gelis_data = filtered_df[filtered_df['MERKEZE GELDİĞİ ARACIN HATTI'].notna()]
     gelis_data = gelis_data[gelis_data['MERKEZE GELDİĞİ ARACIN HATTI'] != '']
     if not gelis_data.empty:
@@ -289,7 +292,6 @@ with tab1:
         gelis_ozet = gelis_ozet.sort_values('Kisi', ascending=False)
         st.dataframe(gelis_ozet, use_container_width=True)
         
-        # Geliş hatları grafiği
         fig_gelis, ax = plt.subplots(figsize=(10, 4))
         top_gelis = gelis_ozet.groupby('MERKEZE GELDİĞİ ARACIN HATTI')['Kisi'].sum().nlargest(10).reset_index()
         ax.barh(top_gelis['MERKEZE GELDİĞİ ARACIN HATTI'], top_gelis['Kisi'], color='#4CAF50')
@@ -300,14 +302,12 @@ with tab1:
         st.info("Geliş hattı verisi bulunamadı.")
 
 with tab2:
-    # Nereye gitti
     gidis_data = filtered_df[filtered_df['Hedef_Temiz'].notna()]
     if not gidis_data.empty:
         gidis_ozet = gidis_data.groupby(['YÖN', 'Hedef_Temiz']).size().reset_index(name='Kisi')
         gidis_ozet = gidis_ozet.sort_values('Kisi', ascending=False)
         st.dataframe(gidis_ozet, use_container_width=True)
         
-        # Gidiş grafiği
         fig_gidis, ax = plt.subplots(figsize=(10, 4))
         top_gidis = gidis_ozet.groupby('Hedef_Temiz')['Kisi'].sum().nlargest(10).reset_index()
         ax.barh(top_gidis['Hedef_Temiz'], top_gidis['Kisi'], color='#FF5722')
@@ -318,25 +318,55 @@ with tab2:
         st.info("Gidiş verisi bulunamadı.")
 
 with tab3:
-    # Gitmeyenler
-    gitmeyen_data = filtered_df[
-        (filtered_df['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'] == 0) |
-        (filtered_df['Hedef_Temiz'].isna())
-    ]
+    # Aktarma yapanlar (AKTARMA == 1)
+    aktarma_data = filtered_df[filtered_df['AKTARMA'] == 1]
+    if not aktarma_data.empty:
+        aktarma_ozet = aktarma_data.groupby(['YÖN', 'Hedef_Temiz']).size().reset_index(name='Kisi')
+        aktarma_ozet = aktarma_ozet.sort_values('Kisi', ascending=False)
+        st.dataframe(aktarma_ozet, use_container_width=True)
+        st.metric("Toplam Aktarma Yapan", f"{len(aktarma_data):,}")
+        
+        # Aktarma yapanların saatlik dağılımı
+        aktarma_saat = aktarma_data.groupby('Saat').size().reset_index(name='Kisi')
+        fig_aktarma, ax = plt.subplots(figsize=(10, 4))
+        ax.bar(aktarma_saat['Saat'], aktarma_saat['Kisi'], color='#4CAF50')
+        ax.set_title('Aktarma Yapanların Saatlik Dağılımı', fontsize=14)
+        ax.set_xlabel('Saat')
+        ax.set_ylabel('Kişi Sayısı')
+        ax.grid(True, alpha=0.3)
+        ax.set_xticks(range(0, 24))
+        st.pyplot(fig_aktarma)
+    else:
+        st.info("Aktarma yapan verisi bulunamadı.")
+
+with tab4:
+    # Gitmeyenler: AKTARMA == 0
+    gitmeyen_data = filtered_df[filtered_df['AKTARMA'] == 0]
     if not gitmeyen_data.empty:
         gitmeyen_ozet = gitmeyen_data.groupby('YÖN').size().reset_index(name='Kisi')
         st.dataframe(gitmeyen_ozet, use_container_width=True)
-        st.metric("Toplam Gitmeyen", f"{len(gitmeyen_data):,}")
+        st.metric("🚫 Toplam Gitmeyen (Aktarma Yok)", f"{len(gitmeyen_data):,}")
+        
+        # Gitmeyenlerin saatlik dağılımı
+        gitmeyen_saat = gitmeyen_data.groupby('Saat').size().reset_index(name='Kisi')
+        fig_gitmeyen, ax = plt.subplots(figsize=(10, 4))
+        ax.bar(gitmeyen_saat['Saat'], gitmeyen_saat['Kisi'], color='#FF5722')
+        ax.set_title('Gitmeyenlerin Saatlik Dağılımı', fontsize=14)
+        ax.set_xlabel('Saat')
+        ax.set_ylabel('Kişi Sayısı')
+        ax.grid(True, alpha=0.3)
+        ax.set_xticks(range(0, 24))
+        st.pyplot(fig_gitmeyen)
+        
+        # Gitmeyenlerin yön bazında detayı
+        gitmeyen_detay = gitmeyen_data.groupby(['YÖN', 'Saat_Dilimi']).size().reset_index(name='Kisi')
+        st.dataframe(gitmeyen_detay, use_container_width=True)
     else:
         st.info("Gitmeyen verisi bulunamadı.")
 
-with tab4:
-    # Ham veri (filtrelenmiş)
+with tab5:
     st.dataframe(filtered_df.head(200), use_container_width=True)
     st.caption(f"Toplam {len(filtered_df):,} satır gösteriliyor (ilk 200).")
 
-# ------------------------------
-# ALT BİLGİ
-# ------------------------------
 st.markdown("---")
 st.caption("⛴️ Vapur Hattı Analiz Dashboard | Veri: 20260506_2_REV5.xlsx | Tüm hakları saklıdır.")
