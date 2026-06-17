@@ -1,11 +1,18 @@
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import os
 
 # ------------------------------
-# 1. VERİYİ OKU VE TEMİZLE
+# 1. VERİYİ OKU
 # ------------------------------
 file_path = '20260506_2_REV5.xlsx'
+
+if not os.path.exists(file_path):
+    print(f"❌ Hata: '{file_path}' dosyası bulunamadı. Lütfen dosyayı bu klasöre koyun.")
+    exit()
+
+print("📂 Dosya okunuyor...")
 df = pd.read_excel(file_path, sheet_name='Sayfa2')
 
 # Sütun adlarını temizle
@@ -26,23 +33,33 @@ df['Saat_Dilimi'] = df['Saat'].apply(lambda x: f"{x:02d}:00–{x:02d}:59")
 # Yön temizle
 df['YÖN'] = df['YÖN'].str.strip()
 
+print(f"✅ Veri yüklendi: {df.shape[0]} satır")
+
 # ------------------------------
 # 2. İKİ YÖN İÇİN AYRI DATAFRAME'LER
 # ------------------------------
 df_uskudar = df[df['YÖN'] == 'ÜSKÜDAR → BEŞİKTAŞ'].copy()
 df_besiktas = df[df['YÖN'] == 'BEŞİKTAŞ → ÜSKÜDAR'].copy()
 
+print(f"   Üsküdar→Beşiktaş: {len(df_uskudar)} yolcu")
+print(f"   Beşiktaş→Üsküdar: {len(df_besiktas)} yolcu")
+
 # ------------------------------
-# 3. FONKSİYONLAR (Analizleri tekrar kullanmak için)
+# 3. ANALİZ FONKSİYONU
 # ------------------------------
 def analiz_yap(df_yon, yon_adi):
     """
-    Verilen yön DataFrame'i için tüm analizleri yapar ve sonuçları sözlük olarak döndürür.
+    Verilen yön için 4 temel analizi yapar:
+    1. Saatlik biniş
+    2. Geliş kaynakları (nereden geldi)
+    3. Gidilen yerler (nereye gitti)
+    4. Gitmeyenler (aktarma yapmayan)
     """
-    # a) Saat dilimine göre binme
+    
+    # 1. Saat dilimine göre binme
     binme = df_yon.groupby('Saat_Dilimi').size().reset_index(name='Toplam_Binme')
     
-    # b) Geliş hatları (nereden geldi)
+    # 2. Geliş hatları (nereden geldi)
     gelis_df = df_yon[df_yon['MERKEZE GELDİĞİ ARACIN HATTI'].notna()]
     gelis_df = gelis_df[gelis_df['MERKEZE GELDİĞİ ARACIN HATTI'] != '']
     gelis = gelis_df.groupby(
@@ -50,7 +67,7 @@ def analiz_yap(df_yon, yon_adi):
     ).size().reset_index(name='Kisi_Sayisi')
     gelis.rename(columns={'MERKEZE GELDİĞİ ARACIN HATTI': 'Gelis_Hatti'}, inplace=True)
     
-    # c) İndikten sonra gidilen yerler (aktarma yapanlar)
+    # 3. İndikten sonra gidilen yerler (aktarma yapanlar)
     giden_df = df_yon[
         (df_yon['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'] == 1) |
         (df_yon['İNDİKTEN SONRA NEREYE GİTTİ'].notna() & 
@@ -62,7 +79,7 @@ def analiz_yap(df_yon, yon_adi):
     ).size().reset_index(name='Kisi_Sayisi')
     gidis.rename(columns={'İNDİKTEN SONRA NEREYE GİTTİ': 'Gidilen_Yer'}, inplace=True)
     
-    # d) İndikten sonra hiçbir yere gitmeyenler
+    # 4. İndikten sonra hiçbir yere gitmeyenler
     gitmeyen_df = df_yon[
         (df_yon['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'] == 0) |
         (df_yon['İNDİKTEN SONRA NEREYE GİTTİ'].isna()) |
@@ -71,221 +88,152 @@ def analiz_yap(df_yon, yon_adi):
     ]
     gitmeyen = gitmeyen_df.groupby('Saat_Dilimi').size().reset_index(name='Gitmeyen_Sayisi')
     
-    # e) Genel özet
-    toplam = df_yon.shape[0]
-    ortalama = toplam / 24  # yaklaşık saat başı
-    en_cok_yer = gidis.groupby('Gidilen_Yer')['Kisi_Sayisi'].sum().idxmax() if not gidis.empty else 'Yok'
-    
-    return {
-        'binme': binme,
-        'gelis': gelis,
-        'gidis': gidis,
-        'gitmeyen': gitmeyen,
-        'toplam': toplam,
-        'ortalama': ortalama,
-        'en_cok_yer': en_cok_yer
-    }
+    return binme, gelis, gidis, gitmeyen
 
 # ------------------------------
 # 4. ANALİZLERİ ÇALIŞTIR
 # ------------------------------
-sonuc_uskudar = analiz_yap(df_uskudar, 'Üsküdar→Beşiktaş')
-sonuc_besiktas = analiz_yap(df_besiktas, 'Beşiktaş→Üsküdar')
+print("\n📊 Analizler yapılıyor...")
+binme_u, gelis_u, gidis_u, gitmeyen_u = analiz_yap(df_uskudar, 'Üsküdar')
+binme_b, gelis_b, gidis_b, gitmeyen_b = analiz_yap(df_besiktas, 'Beşiktaş')
 
 # ------------------------------
-# 5. TAHMİN İÇİN VERİ HAZIRLA (Ortalama ve Mod)
+# 5. TAHMİN VERİSİ HAZIRLA
 # ------------------------------
-# Saat dilimlerini sıralı hale getir
-saat_sirasi = {f"{i:02d}:00–{i:02d}:59": i for i in range(24)}
+print("🔮 Tahmin verisi hazırlanıyor...")
 
-# Üsküdar yönü için tahmin tablosu
-tahmin_uskudar = sonuc_uskudar['binme'].copy()
-tahmin_uskudar['Ortalama'] = tahmin_uskudar['Toplam_Binme']  # basitçe o saatteki toplam (zaten saatlik)
-# En çok gidilen yeri ekle
-# Her saat dilimi için en çok gidilen yeri bul
-uskudar_gidis_saat = sonuc_uskudar['gidis'].copy()
-mod_uskudar = uskudar_gidis_saat.groupby('Saat_Dilimi').apply(
-    lambda x: x.loc[x['Kisi_Sayisi'].idxmax(), 'Gidilen_Yer'] if not x.empty else 'Yok'
-).reset_index(name='En_Cok_Gidilen_Yer')
-tahmin_uskudar = tahmin_uskudar.merge(mod_uskudar, on='Saat_Dilimi', how='left')
-tahmin_uskudar['Saat_Sirasi'] = tahmin_uskudar['Saat_Dilimi'].map(saat_sirasi)
-tahmin_uskudar = tahmin_uskudar.sort_values('Saat_Sirasi').drop('Saat_Sirasi', axis=1)
+# Tüm gidilen yerleri topla
+tum_gidis = df[
+    (df['İNDİKTEN SONRA NEREYE GİTTİ'].notna()) &
+    (df['İNDİKTEN SONRA NEREYE GİTTİ'].str.strip().notna()) &
+    (df['İNDİKTEN SONRA NEREYE GİTTİ'] != 'BİLİNMİYOR')
+].copy()
+tum_gidis['Saat'] = tum_gidis['MERKEZDEN GEMİYE BİNİŞ'].dt.hour
 
-# Beşiktaş yönü için tahmin tablosu
-tahmin_besiktas = sonuc_besiktas['binme'].copy()
-tahmin_besiktas['Ortalama'] = tahmin_besiktas['Toplam_Binme']
-besiktas_gidis_saat = sonuc_besiktas['gidis'].copy()
-mod_besiktas = besiktas_gidis_saat.groupby('Saat_Dilimi').apply(
-    lambda x: x.loc[x['Kisi_Sayisi'].idxmax(), 'Gidilen_Yer'] if not x.empty else 'Yok'
-).reset_index(name='En_Cok_Gidilen_Yer')
-tahmin_besiktas = tahmin_besiktas.merge(mod_besiktas, on='Saat_Dilimi', how='left')
-tahmin_besiktas['Saat_Sirasi'] = tahmin_besiktas['Saat_Dilimi'].map(saat_sirasi)
-tahmin_besiktas = tahmin_besiktas.sort_values('Saat_Sirasi').drop('Saat_Sirasi', axis=1)
+# Yön + Hedef + Saat bazında ortalama
+tahmin_df = tum_gidis.groupby(
+    ['YÖN', 'İNDİKTEN SONRA NEREYE GİTTİ', 'Saat']
+).size().reset_index(name='Tahmini_Yolcu_Sayisi')
+tahmin_df.rename(columns={'İNDİKTEN SONRA NEREYE GİTTİ': 'Hedef'}, inplace=True)
+
+# Tüm kombinasyonları oluştur (0-23 saat, tüm hedefler, her iki yön)
+tum_hedefler = tahmin_df['Hedef'].unique()
+tum_yonler = tahmin_df['YÖN'].unique()
+tum_saatler = list(range(24))
+
+tum_kombinasyon = []
+for yon in tum_yonler:
+    for hedef in tum_hedefler:
+        for saat in tum_saatler:
+            tum_kombinasyon.append({'YÖN': yon, 'Hedef': hedef, 'Saat': saat})
+
+tum_kombinasyon_df = pd.DataFrame(tum_kombinasyon)
+
+# Birleştir ve eksikleri 0 ile doldur
+tahmin_full = tum_kombinasyon_df.merge(
+    tahmin_df,
+    on=['YÖN', 'Hedef', 'Saat'],
+    how='left'
+)
+tahmin_full['Tahmini_Yolcu_Sayisi'] = tahmin_full['Tahmini_Yolcu_Sayisi'].fillna(0).astype(int)
 
 # ------------------------------
-# 6. EXCEL'E YAZ (MODERN DASHBOARD)
+# 6. PİVOT TABLOLARI HAZIRLA
 # ------------------------------
-output_file = 'dashboard_prof.xlsx'
+# Üsküdar için pivot (Hedefler x Saat Dilimleri)
+gidis_u_pivot = gidis_u.pivot(index='Gidilen_Yer', columns='Saat_Dilimi', values='Kisi_Sayisi').fillna(0)
 
-with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
-    workbook = writer.book
-    
-    # ---- VERİ SAYFALARI ----
-    # Üsküdar yönü
-    sonuc_uskudar['binme'].to_excel(writer, sheet_name='Uskudar_Binme', index=False)
-    sonuc_uskudar['gelis'].to_excel(writer, sheet_name='Uskudar_Gelis', index=False)
-    sonuc_uskudar['gidis'].to_excel(writer, sheet_name='Uskudar_Gidis', index=False)
-    sonuc_uskudar['gitmeyen'].to_excel(writer, sheet_name='Uskudar_Gitmeyen', index=False)
-    
-    # Beşiktaş yönü
-    sonuc_besiktas['binme'].to_excel(writer, sheet_name='Besiktas_Binme', index=False)
-    sonuc_besiktas['gelis'].to_excel(writer, sheet_name='Besiktas_Gelis', index=False)
-    sonuc_besiktas['gidis'].to_excel(writer, sheet_name='Besiktas_Gidis', index=False)
-    sonuc_besiktas['gitmeyen'].to_excel(writer, sheet_name='Besiktas_Gitmeyen', index=False)
-    
-    # Tahmin tabloları
-    tahmin_uskudar.to_excel(writer, sheet_name='Tahmin_Uskudar', index=False)
-    tahmin_besiktas.to_excel(writer, sheet_name='Tahmin_Besiktas', index=False)
-    
-    # ---- DASHBOARD SAYFALARI ----
-    def create_dashboard(sheet_name, yon_adi, sonuc, tahmin_df):
-        dashboard = workbook.add_worksheet(sheet_name)
-        
-        # Stiller
-        title_style = workbook.add_format({
-            'bold': True, 'font_size': 18, 'font_color': '#1E88E5',
-            'align': 'center', 'valign': 'vcenter'
-        })
-        header_style = workbook.add_format({
-            'bold': True, 'font_size': 12, 'bg_color': '#1E88E5',
-            'font_color': 'white', 'align': 'center', 'valign': 'vcenter'
-        })
-        card_style = workbook.add_format({
-            'bold': True, 'font_size': 14, 'bg_color': '#F5F5F5',
-            'border': 1, 'align': 'center', 'valign': 'vcenter'
-        })
-        value_style = workbook.add_format({
-            'bold': True, 'font_size': 16, 'bg_color': '#E3F2FD',
-            'border': 1, 'align': 'center', 'valign': 'vcenter'
-        })
-        
-        # Başlık
-        dashboard.merge_range('A1:F1', f'🚢 {yon_adi} Yolcu Analiz Dashboard', title_style)
-        
-        # Özet kartlar
-        dashboard.write('A3', '📊 Özet İstatistikler', header_style)
-        dashboard.merge_range('A4:B4', 'Toplam Biniş', card_style)
-        dashboard.merge_range('C4:D4', f'{sonuc["toplam"]:,}', value_style)
-        dashboard.merge_range('E4:F4', 'Ortalama Biniş/Saat', card_style)
-        dashboard.merge_range('G4:H4', f'{sonuc["ortalama"]:.1f}', value_style)
-        
-        dashboard.merge_range('A5:B5', '🚫 Gitmeyen (Aktarma Yok)', card_style)
-        dashboard.merge_range('C5:D5', f'{sonuc["gitmeyen"]["Gitmeyen_Sayisi"].sum():,}', value_style)
-        dashboard.merge_range('E5:F5', '🏆 En Çok Gidilen Yer', card_style)
-        dashboard.merge_range('G5:H5', f'{sonuc["en_cok_yer"]}', value_style)
-        
-        # Grafik 1: Saatlik Biniş (Sütun)
-        chart1 = workbook.add_chart({'type': 'column'})
-        binme_data = sonuc['binme']
-        if not binme_data.empty:
-            start_row = binme_data.index[0] + 2
-            end_row = binme_data.index[-1] + 2
-            categories = f"='{sheet_name.replace('Dashboard_', '')}_Binme'!$A${start_row}:$A${end_row}"
-            values = f"='{sheet_name.replace('Dashboard_', '')}_Binme'!$B${start_row}:$B${end_row}"
-            chart1.add_series({
-                'name': 'Toplam Biniş',
-                'categories': categories,
-                'values': values,
-            })
-            chart1.set_title({'name': 'Saat Dilimine Göre Biniş Sayısı'})
-            chart1.set_x_axis({'name': 'Saat Dilimi'})
-            chart1.set_y_axis({'name': 'Kişi Sayısı'})
-            chart1.set_legend({'position': 'none'})
-            chart1.set_size({'width': 720, 'height': 400})
-            dashboard.insert_chart('A7', chart1)
-        
-        # Grafik 2: En Çok Gidilen Yerler (Pasta) - Tüm yerler, ama en büyük 10 gösterelim
-        gidis_data = sonuc['gidis']
-        if not gidis_data.empty:
-            top_yerler = gidis_data.groupby('Gidilen_Yer')['Kisi_Sayisi'].sum().nlargest(10).reset_index()
-            # Verileri dashboard'a yaz
-            dashboard.write('A30', '🏆 En Çok Gidilen Yerler (Top 10)', header_style)
-            dashboard.write('A31', 'Yer', header_style)
-            dashboard.write('B31', 'Kişi Sayısı', header_style)
-            for idx, row in enumerate(top_yerler.itertuples()):
-                dashboard.write(f'A{32+idx}', row.Gidilen_Yer)
-                dashboard.write(f'B{32+idx}', row.Kisi_Sayisi)
-            
-            chart2 = workbook.add_chart({'type': 'pie'})
-            chart2.add_series({
-                'name': 'Gidilen Yerler',
-                'categories': '=Dashboard!$A$32:$A$41',
-                'values': '=Dashboard!$B$32:$B$41',
-            })
-            chart2.set_title({'name': 'En Çok Gidilen 10 Yer'})
-            chart2.set_legend({'position': 'right'})
-            chart2.set_size({'width': 500, 'height': 400})
-            dashboard.insert_chart('E30', chart2)
-        
-        # Tablo: Tüm gidilen yerler (saat dilimine göre) - Pivot ayrı sayfada
-        dashboard.write('A50', '📋 Tüm Gidilen Yerler (Saat Dilimine Göre)', header_style)
-        dashboard.write('A51', 'Detaylı pivot tablo için "Gidis_Pivot" sayfasına bakınız.', workbook.add_format({'italic': True}))
-        
-        # Sütun genişlikleri
-        dashboard.set_column('A:A', 25)
-        dashboard.set_column('B:B', 15)
-        dashboard.set_column('C:C', 15)
-        dashboard.set_column('D:D', 15)
-        dashboard.set_column('E:E', 25)
-        dashboard.set_column('F:F', 15)
-        dashboard.set_column('G:G', 15)
-        dashboard.set_column('H:H', 15)
-    
-    # Dashboard sayfalarını oluştur
-    create_dashboard('Dashboard_Uskudar', 'Üsküdar → Beşiktaş', sonuc_uskudar, tahmin_uskudar)
-    create_dashboard('Dashboard_Besiktas', 'Beşiktaş → Üsküdar', sonuc_besiktas, tahmin_besiktas)
-    
-    # ---- TAHMİN SAYFASI ----
-    tahmin_sheet = workbook.add_worksheet('Tahmin')
-    title_style = workbook.add_format({'bold': True, 'font_size': 16, 'font_color': '#1E88E5', 'align': 'center'})
-    header_style = workbook.add_format({'bold': True, 'bg_color': '#1E88E5', 'font_color': 'white'})
-    input_style = workbook.add_format({'bg_color': '#FFF9C4', 'border': 1})
-    result_style = workbook.add_format({'bold': True, 'font_size': 14, 'bg_color': '#E8F5E9', 'border': 1})
-    
-    tahmin_sheet.merge_range('A1:C1', '🔮 Yolcu Tahmin Aracı', title_style)
-    tahmin_sheet.write('A3', 'Yön Seçiniz:', header_style)
-    tahmin_sheet.write('B3', 'Üsküdar→Beşiktaş', input_style)
-    tahmin_sheet.write('C3', 'veya Beşiktaş→Üsküdar', input_style)
-    tahmin_sheet.write('A4', 'Saat (0-23):', header_style)
-    tahmin_sheet.write('B4', 8, input_style)
-    
-    tahmin_sheet.write('A6', 'Tahmini Sonuçlar:', header_style)
-    tahmin_sheet.write('A7', 'Ortalama Yolcu Sayısı:', header_style)
-    tahmin_sheet.write('B7', '', result_style)
-    tahmin_sheet.write('A8', 'En Çok Gidilen Yer:', header_style)
-    tahmin_sheet.write('B8', '', result_style)
-    
-    # Veri doğrulama (dropdown) ekle
-    tahmin_sheet.data_validation('B3', {
-        'validate': 'list',
-        'source': ['Üsküdar→Beşiktaş', 'Beşiktaş→Üsküdar']
-    })
-    tahmin_sheet.data_validation('B4', {
-        'validate': 'integer',
-        'criteria': 'between',
-        'minimum': 0,
-        'maximum': 23
-    })
-    
-    tahmin_sheet.set_column('A:A', 25)
-    tahmin_sheet.set_column('B:B', 20)
-    tahmin_sheet.set_column('C:C', 20)
-    
-    # Pivot tabloları ayrı sayfalara yaz (gidis pivot)
-    for yon, suffix in [('Uskudar', 'Üsküdar→Beşiktaş'), ('Besiktas', 'Beşiktaş→Üsküdar')]:
-        gidis_pivot = sonuc_uskudar['gidis'].pivot(index='Gidilen_Yer', columns='Saat_Dilimi', values='Kisi_Sayisi').fillna(0)
-        gidis_pivot.reset_index().to_excel(writer, sheet_name=f'{yon}_Gidis_Pivot', index=False)
+# Beşiktaş için pivot
+gidis_b_pivot = gidis_b.pivot(index='Gidilen_Yer', columns='Saat_Dilimi', values='Kisi_Sayisi').fillna(0)
 
-print(f"✅ Profesyonel dashboard oluşturuldu: {output_file}")
-print("📌 Tahmin sayfasında B3 ve B4 hücrelerine veri girerek tahmin alabilirsiniz.")
-print("⚠️ Not: Tahmin sonuçları Excel formülleri ile otomatik gelmeyecektir. İsterseniz VBA veya manuel DÜŞEYARA ekleyin.")
+# ------------------------------
+# 7. ÖZET TABLO
+# ------------------------------
+ozet = pd.DataFrame({
+    'Yön': ['Üsküdar → Beşiktaş', 'Beşiktaş → Üsküdar'],
+    'Toplam_Biniş': [len(df_uskudar), len(df_besiktas)],
+    'Aktarma_Yapan': [gidis_u['Kisi_Sayisi'].sum(), gidis_b['Kisi_Sayisi'].sum()],
+    'Gitmeyen_(Aktarma_Yok)': [gitmeyen_u['Gitmeyen_Sayisi'].sum(), gitmeyen_b['Gitmeyen_Sayisi'].sum()],
+    'Ortalama_Biniş/Saat': [round(len(df_uskudar)/24, 1), round(len(df_besiktas)/24, 1)]
+})
+
+# ------------------------------
+# 8. EXCEL'E YAZ (openpyxl ile)
+# ------------------------------
+output_file = 'vapur_tam_analiz.xlsx'
+print(f"\n📁 Excel dosyası oluşturuluyor: {output_file}")
+
+with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+    
+    # ---- ÜSKÜDAR YÖNÜ ----
+    binme_u.to_excel(writer, sheet_name='Uskudar_Binme', index=False)
+    gelis_u.to_excel(writer, sheet_name='Uskudar_Gelis', index=False)
+    gidis_u.to_excel(writer, sheet_name='Uskudar_Gidis', index=False)
+    gitmeyen_u.to_excel(writer, sheet_name='Uskudar_Gitmeyen', index=False)
+    
+    # ---- BEŞİKTAŞ YÖNÜ ----
+    binme_b.to_excel(writer, sheet_name='Besiktas_Binme', index=False)
+    gelis_b.to_excel(writer, sheet_name='Besiktas_Gelis', index=False)
+    gidis_b.to_excel(writer, sheet_name='Besiktas_Gidis', index=False)
+    gitmeyen_b.to_excel(writer, sheet_name='Besiktas_Gitmeyen', index=False)
+    
+    # ---- TAHMİN VERİSİ ----
+    tahmin_full.to_excel(writer, sheet_name='Tahmin_Verisi', index=False)
+    
+    # ---- PİVOT TABLOLAR ----
+    gidis_u_pivot.reset_index().to_excel(writer, sheet_name='Uskudar_Gidis_Pivot', index=False)
+    gidis_b_pivot.reset_index().to_excel(writer, sheet_name='Besiktas_Gidis_Pivot', index=False)
+    
+    # ---- ÖZET ----
+    ozet.to_excel(writer, sheet_name='Ozet', index=False)
+
+# ------------------------------
+# 9. EXCEL SÜTUN GENİŞLİKLERİNİ AYARLA (opsiyonel)
+# ------------------------------
+try:
+    from openpyxl import load_workbook
+    wb = load_workbook(output_file)
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        for col in ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 40)
+            ws.column_dimensions[column].width = adjusted_width
+    wb.save(output_file)
+    print("✅ Sütun genişlikleri ayarlandı.")
+except Exception as e:
+    print(f"⚠️ Sütun genişliği ayarlanamadı: {e}")
+
+# ------------------------------
+# 10. SONUÇ RAPORU
+# ------------------------------
+print("\n" + "="*60)
+print("📊 ANALİZ SONUÇLARI ÖZETİ")
+print("="*60)
+
+print(f"\n🚢 Üsküdar → Beşiktaş")
+print(f"   Toplam Yolcu: {len(df_uskudar)}")
+print(f"   Aktarma Yapan: {gidis_u['Kisi_Sayisi'].sum()}")
+print(f"   Gitmeyen: {gitmeyen_u['Gitmeyen_Sayisi'].sum()}")
+print(f"   En Yoğun Saat: {binme_u.loc[binme_u['Toplam_Binme'].idxmax(), 'Saat_Dilimi']} ({binme_u['Toplam_Binme'].max()} kişi)")
+print(f"   En Çok Gidilen Yer: {gidis_u.groupby('Gidilen_Yer')['Kisi_Sayisi'].sum().idxmax()}")
+
+print(f"\n🚢 Beşiktaş → Üsküdar")
+print(f"   Toplam Yolcu: {len(df_besiktas)}")
+print(f"   Aktarma Yapan: {gidis_b['Kisi_Sayisi'].sum()}")
+print(f"   Gitmeyen: {gitmeyen_b['Gitmeyen_Sayisi'].sum()}")
+print(f"   En Yoğun Saat: {binme_b.loc[binme_b['Toplam_Binme'].idxmax(), 'Saat_Dilimi']} ({binme_b['Toplam_Binme'].max()} kişi)")
+print(f"   En Çok Gidilen Yer: {gidis_b.groupby('Gidilen_Yer')['Kisi_Sayisi'].sum().idxmax()}")
+
+print("\n" + "="*60)
+print(f"✅ Tüm analizler '{output_file}' dosyasına kaydedildi.")
+print("📌 Müdürün sorusu için: 'Uskudar_Gidis_Pivot' veya 'Besiktas_Gidis_Pivot' sayfalarını açın.")
+print("   Örneğin: Beykoz'dan gelenleri 'Uskudar_Gelis' sayfasında, Sarıyer'e gidenleri 'Uskudar_Gidis_Pivot'da filtreleyin.")
+print("="*60)
