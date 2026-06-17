@@ -4,11 +4,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 from datetime import datetime
-import folium
-from streamlit_folium import st_folium
-from folium.plugins import MarkerCluster
-from geopy.geocoders import Nominatim
-import time
 
 # ------------------------------
 # Sayfa ayarları
@@ -94,77 +89,6 @@ def load_data(file):
 
 df = load_data(uploaded_file)
 st.success(f"✅ Veri başarıyla yüklendi! Toplam {df.shape[0]:,} satır.")
-
-# ------------------------------
-# İSTANBUL İLÇE KOORDİNATLARI (Statik)
-# ------------------------------
-ilce_koordinatlar = {
-    'BEŞİKTAŞ': (41.0425, 29.0070),
-    'ÜSKÜDAR': (41.0248, 29.0140),
-    'KADIKÖY': (40.9916, 29.0306),
-    'TAKSİM': (41.0370, 28.9850),
-    'SARIYER': (41.1720, 29.0350),
-    'BEYKOZ': (41.1330, 29.0900),
-    'KABATAŞ': (41.0350, 28.9950),
-    'EMİNÖNÜ': (41.0150, 28.9750),
-    'KARAKÖY': (41.0230, 28.9800),
-    'BOSTANCI': (40.9540, 29.1000),
-    'MALTEPE': (40.9240, 29.1550),
-    'KARTAL': (40.8860, 29.1900),
-    'PENDİK': (40.8780, 29.2420),
-    'SULTANBEYLİ': (40.9600, 29.2650),
-    'ATAŞEHİR': (40.9850, 29.1250),
-    'UMRANİYE': (41.0150, 29.1000),
-    'ÇEKMEKÖY': (41.0350, 29.1750),
-    'BEYLİKDÜZÜ': (41.0000, 28.6400),
-    'AVCILAR': (40.9800, 28.7200),
-    'BAKIRKÖY': (40.9900, 28.8700),
-    'ZEYTİNBURNU': (40.9950, 28.9000),
-    'FATİH': (41.0200, 28.9500),
-    'EYÜPSULTAN': (41.0500, 28.9350),
-    'GAZİOSMANPAŞA': (41.0700, 28.9200),
-    'BAĞCILAR': (41.0350, 28.8200),
-    'KÜÇÜKÇEKMECE': (41.0100, 28.7700),
-    'BAHÇELİEVLER': (40.9950, 28.8500),
-    'SİLİVRİ': (41.0750, 28.2500),
-    'ÇATALCA': (41.1420, 28.4600),
-    'ARNAVUTKÖY': (41.1850, 28.7400),
-    'BÜYÜKÇEKMECE': (41.0200, 28.5800),
-}
-
-# ------------------------------
-# KOORDİNAT BULMA (STATİK + OTOMATİK)
-# ------------------------------
-def get_coordinates_static(yer):
-    if not yer or yer == 'None':
-        return None
-    yer_ust = yer.upper().strip()
-    if yer_ust in ilce_koordinatlar:
-        return ilce_koordinatlar[yer_ust]
-    for key, coord in ilce_koordinatlar.items():
-        if key in yer_ust or yer_ust in key:
-            return coord
-    return None
-
-@st.cache_data
-def get_coordinates_auto(yer_adı):
-    if not yer_adı or yer_adı == 'None':
-        return None
-    
-    static_result = get_coordinates_static(yer_adı)
-    if static_result:
-        return static_result
-    
-    try:
-        geolocator = Nominatim(user_agent="vapur_analiz_uygulama")
-        location = geolocator.geocode(f"{yer_adı}, İstanbul, Türkiye")
-        if not location:
-            location = geolocator.geocode(yer_adı)
-        if location:
-            return (location.latitude, location.longitude)
-        return None
-    except:
-        return None
 
 # ------------------------------
 # Sidebar - Filtreler
@@ -289,42 +213,6 @@ if not kart_df.empty:
         st.dataframe(kart_ozet, use_container_width=True)
 
 # ------------------------------
-# HARİTA İLE NEREYE GİTTİ? (OTOMATİK KOORDİNAT)
-# ------------------------------
-st.subheader("🗺️ Gidilen Yerler Haritası")
-
-# Gidilen yerleri koordinatlarla eşleştir
-gidis_data = filtered_df[filtered_df['Hedef_Temiz'].notna()].copy()
-gidis_data['Koordinat'] = gidis_data['Hedef_Temiz'].apply(get_coordinates_auto)
-gidis_harita = gidis_data.dropna(subset=['Koordinat'])
-
-if not gidis_harita.empty:
-    m = folium.Map(location=[41.015, 28.98], zoom_start=11, tiles='OpenStreetMap')
-    marker_cluster = MarkerCluster().add_to(m)
-    
-    for _, row in gidis_harita.iterrows():
-        lat, lon = row['Koordinat']
-        popup_text = f"""
-        <b>{row['Hedef_Temiz']}</b><br>
-        Yön: {row['YÖN']}<br>
-        Saat: {row['Saat']}:00<br>
-        Kart: {row['KART_TIPI']}
-        """
-        folium.Marker(
-            location=[lat, lon],
-            popup=folium.Popup(popup_text, max_width=300),
-            icon=folium.Icon(color='blue' if row['YÖN'] == 'ÜSKÜDAR → BEŞİKTAŞ' else 'orange', icon='info-sign')
-        ).add_to(marker_cluster)
-    
-    st_folium(m, width=1000, height=500)
-    
-    col_h1, col_h2 = st.columns(2)
-    col_h1.metric("Toplam Gidilen Yer", f"{len(gidis_harita['Hedef_Temiz'].unique())} farklı yer")
-    col_h2.metric("Toplam İşaretlenen Nokta", f"{len(gidis_harita):,}")
-else:
-    st.info("Harita için yeterli veri bulunamadı (koordinat eşleşmesi yapılamadı).")
-
-# ------------------------------
 # TAHMİN ARACI
 # ------------------------------
 st.header("🔮 Gelişmiş Tahmin Aracı")
@@ -406,14 +294,13 @@ else:
         st.info("Bu yön için hedef verisi bulunamadı. Lütfen başka bir yön seçin.")
 
 # ------------------------------
-# DETAYLI TABLOLAR
+# DETAYLI TABLOLAR (Harita Tab'ı Kaldırıldı)
 # ------------------------------
 st.subheader("📋 Detaylı Veri Tabloları")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "📍 Nereden Geldi?", 
     "🎯 Nereye Gitti?",
-    "🗺️ Harita Verisi",
     "🚫 Gitmeyenler", 
     "📊 Tüm Veri"
 ])
@@ -452,18 +339,6 @@ with tab2:
         st.info("Gidiş verisi bulunamadı.")
 
 with tab3:
-    # Tab3'te haritada kullanılan gidis_data'yı (Koordinat sütunu ile) göster
-    if 'Koordinat' in gidis_data.columns:
-        harita_data = gidis_data[gidis_data['Koordinat'].notna()][['YÖN', 'Hedef_Temiz', 'Saat', 'KART_TIPI', 'Koordinat']]
-        if not harita_data.empty:
-            st.dataframe(harita_data, use_container_width=True)
-            st.caption(f"Haritada {len(harita_data)} nokta işaretlendi.")
-        else:
-            st.info("Koordinatı bulunabilen veri yok.")
-    else:
-        st.info("Harita verisi oluşturulmamış. Lütfen ana harita bölümünü kontrol edin.")
-
-with tab4:
     gitmeyen_data = filtered_df[
         (filtered_df['İNDİKTEN SONRA AKTARMA YAPTIMI(0=HAYIR,1=EVET)'] == 0) |
         (filtered_df['Hedef_Temiz'].isna())
@@ -475,7 +350,7 @@ with tab4:
     else:
         st.info("Gitmeyen verisi bulunamadı.")
 
-with tab5:
+with tab4:
     st.dataframe(filtered_df.head(200), use_container_width=True)
     st.caption(f"Toplam {len(filtered_df):,} satır gösteriliyor (ilk 200).")
 
